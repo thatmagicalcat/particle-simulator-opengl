@@ -1,1 +1,1 @@
-# opengl-circles
+# Particle simulator
