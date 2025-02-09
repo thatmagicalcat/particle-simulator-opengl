@@ -16,8 +16,10 @@ use legion::*;
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 800;
 
-const POINT_COUNT: usize = 32;
-const INSTANCE_DATA_STRIDE: usize = std::mem::size_of::<f32>() * 3;
+const POINT_COUNT: usize = 8;
+
+const FLOATS_PER_INSTANCE: usize = 3;
+const INSTANCE_DATA_STRIDE: usize = std::mem::size_of::<f32>() * FLOATS_PER_INSTANCE;
 
 // space for 50k particles
 const INITIAL_BUFFER_SIZE: usize = std::mem::size_of::<f32>() * 3 * 50_000;

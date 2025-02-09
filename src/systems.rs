@@ -4,7 +4,7 @@ use super::*;
 
 fn get_current_entity<'a>(index: usize, ptr: *mut f32) -> [&'a mut f32; 3] {
     unsafe {
-        let [x, y, r] = std::slice::from_raw_parts_mut(ptr.add(index * INSTANCE_DATA_STRIDE), 3)
+        let [x, y, r] = std::slice::from_raw_parts_mut(ptr.add(index * FLOATS_PER_INSTANCE), 3)
         else {
             unreachable_unchecked()
         };
