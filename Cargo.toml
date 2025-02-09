@@ -1,0 +1,10 @@
+[package]
+name = "particle_simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gl = "0.14.0"
+glam = "0.29.2"
+glfw = "0.59.0"
+legion = "0.4.0"
