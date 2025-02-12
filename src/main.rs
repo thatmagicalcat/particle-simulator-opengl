@@ -21,7 +21,7 @@ use legion::*;
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 800;
 
-const POINT_COUNT: usize = 32;
+const POINT_COUNT: usize = 8;
 const BUFFER_ACCESS_FLAGS: u32 =
     glow::MAP_WRITE_BIT | glow::MAP_READ_BIT | glow::MAP_PERSISTENT_BIT | glow::MAP_COHERENT_BIT;
 
@@ -64,7 +64,7 @@ fn main() {
     let gl =
         unsafe { glow::Context::from_loader_function(|s| window.get_proc_address(s) as *const _) };
 
-    glfw.set_swap_interval(glfw::SwapInterval::Adaptive);
+    glfw.set_swap_interval(glfw::SwapInterval::None);
     unsafe { gl.viewport(0, 0, window.get_size().0, window.get_size().1) };
     window.set_size_polling(true);
 
@@ -167,10 +167,11 @@ fn main() {
         let dt = clock.elapsed().as_nanos() as f32 / 1e9;
         clock = Instant::now();
 
-        // println!(
-        // "FPS: {:.0}",
-        // 1120.0 - (1.0 / dt) * 0.3
-        // );
+        println!(
+            "FPS: {:.0}, {} particles",
+            1.0 / dt,
+            resources.get::<InstanceCount>().unwrap().0
+        );
 
         glfw.poll_events();
 
@@ -198,26 +199,26 @@ fn main() {
             _ => {}
         });
 
-        let ptr = resources.get::<InstanceDataPtr>().unwrap().get_ptr();
-        let mut qt = quadtree::QuadTree::<usize>::new(
-            quad_capacity,
-            Rect {
-                left: 0.,
-                top: 0.,
-                width: window.get_size().0 as _,
-                height: window.get_size().1 as _,
-            },
-        );
+        // let ptr = resources.get::<InstanceDataPtr>().unwrap().get_ptr();
+        // let mut qt = quadtree::QuadTree::<usize>::new(
+        //     quad_capacity,
+        //     Rect {
+        //         left: 0.,
+        //         top: 0.,
+        //         width: window.get_size().0 as _,
+        //         height: window.get_size().1 as _,
+        //     },
+        // );
 
-        <&EntityIndex>::query().for_each(&world, |id| {
-            let [x, y, r, ..] = utils::get_entity(id.0, ptr);
-            qt.push((glam::vec2(*x, *y), *r, id.0));
-        });
+        // <&EntityIndex>::query().for_each(&world, |id| {
+            // let [x, y, r, ..] = utils::get_entity(id.0, ptr);
+            // qt.push((glam::vec2(*x, *y), *r, id.0));
+        // });
 
-        resources.insert(qt);
+        // resources.insert(qt);
 
         if mouse_down {
-            for _ in 0..10 {
+            for _ in 0..100 {
                 if instance_data_offset / 3 < buffer_capacity {
                     let v_x: f32 = rand::random_range(-30.0..30.0);
                     let v_y: f32 = rand::random_range(-30.0..30.0);
