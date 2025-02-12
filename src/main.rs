@@ -6,25 +6,30 @@ mod components;
 mod quadtree;
 mod shader;
 mod systems;
+mod utils;
 
-use components::*;
 use glow::HasContext;
 use shader::Shader;
 use systems as sys;
 
+use components::*;
 use quadtree::*;
+
+use glam::Vec2;
 use legion::*;
 
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 800;
 
-const POINT_COUNT: usize = 8;
+const POINT_COUNT: usize = 32;
+const BUFFER_ACCESS_FLAGS: u32 =
+    glow::MAP_WRITE_BIT | glow::MAP_READ_BIT | glow::MAP_PERSISTENT_BIT | glow::MAP_COHERENT_BIT;
 
-const FLOATS_PER_INSTANCE: usize = 3;
+// x, y, radius, red, green, blue
+const FLOATS_PER_INSTANCE: usize = 6;
 const INSTANCE_DATA_STRIDE: usize = std::mem::size_of::<f32>() * FLOATS_PER_INSTANCE;
 
-// space for 50k particles
-const INITIAL_BUFFER_SIZE: usize = std::mem::size_of::<f32>() * 3 * 50_000;
+const INITIAL_BUFFER_FLOAT_CAPACITY: usize = 1_000_000;
 
 fn main() {
     let mut world = World::default();
@@ -64,8 +69,7 @@ fn main() {
     window.set_size_polling(true);
 
     let (vao, vbo, ebo);
-
-    let (vertices, indices) = generate_circle(POINT_COUNT as _);
+    let (vertices, indices) = utils::generate_circle(POINT_COUNT as _);
 
     unsafe {
         vao = gl.create_vertex_array().unwrap();
@@ -88,7 +92,10 @@ fn main() {
 
         gl.buffer_data_u8_slice(
             glow::ELEMENT_ARRAY_BUFFER,
-            std::slice::from_raw_parts(indices.as_ptr() as _, indices.len() * std::mem::size_of::<f32>()),
+            std::slice::from_raw_parts(
+                indices.as_ptr() as _,
+                indices.len() * std::mem::size_of::<f32>(),
+            ),
             glow::STATIC_READ,
         );
 
@@ -102,13 +109,14 @@ fn main() {
             0,
         );
 
-        // still bound
+        // vao still bound
     }
 
     // instancing
-    let instance_vbo;
-    let instance_data_ptr;
+    let mut instance_vbo;
+    let mut instance_data_ptr;
     let mut instance_data_offset = 0;
+    let mut buffer_capacity = INITIAL_BUFFER_FLOAT_CAPACITY;
 
     unsafe {
         instance_vbo = gl.create_buffer().unwrap();
@@ -116,38 +124,20 @@ fn main() {
 
         gl.buffer_storage(
             glow::ARRAY_BUFFER,
-            INITIAL_BUFFER_SIZE as _,
+            (buffer_capacity * INSTANCE_DATA_STRIDE) as _,
             None,
-            glow::MAP_WRITE_BIT | glow::MAP_PERSISTENT_BIT | glow::MAP_COHERENT_BIT,
+            BUFFER_ACCESS_FLAGS,
         );
 
         instance_data_ptr = gl.map_buffer_range(
             glow::ARRAY_BUFFER,
             0,
-            INITIAL_BUFFER_SIZE as _,
-            glow::MAP_WRITE_BIT | glow::MAP_PERSISTENT_BIT | glow::MAP_COHERENT_BIT,
+            (buffer_capacity * INSTANCE_DATA_STRIDE) as _,
+            BUFFER_ACCESS_FLAGS,
         ) as *mut f32;
 
+        utils::setup_instance_attributes(&gl);
         resources.insert(InstanceDataPtr::new(instance_data_ptr));
-
-        let radius_offset = std::mem::size_of::<f32>() * 2;
-
-        // position
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_divisor(1, 1);
-        gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, INSTANCE_DATA_STRIDE as _, 0);
-
-        // radius
-        gl.enable_vertex_attrib_array(2);
-        gl.vertex_attrib_divisor(2, 1);
-        gl.vertex_attrib_pointer_f32(
-            2,
-            1,
-            glow::FLOAT,
-            false,
-            INSTANCE_DATA_STRIDE as _,
-            radius_offset as _,
-        );
 
         // unbind
         gl.bind_vertex_array(None);
@@ -169,24 +159,23 @@ fn main() {
     orthographic_uniform(window.get_size());
 
     let quad_capacity = 32;
-        std::ptr::copy_nonoverlapping(
-            [100.0, 100.0, 20.0, 300.0, 300.0, 30.0].as_ptr(),
-            instance_data_ptr,
-            6,
-        )
-    };
-
     let mut mouse_down = false;
-    let particle_radius: f32 = 3.0;
+    let particle_radius: f32 = 10.0;
 
     let mut clock = Instant::now();
     while !window.should_close() {
         let dt = clock.elapsed().as_nanos() as f32 / 1e9;
         clock = Instant::now();
 
+        // println!(
+        // "FPS: {:.0}",
+        // 1120.0 - (1.0 / dt) * 0.3
+        // );
+
         glfw.poll_events();
 
         use glfw::WindowEvent;
+
         glfw::flush_messages(&event).for_each(|(_, event)| match event {
             WindowEvent::Key(glfw::Key::Escape, ..) | WindowEvent::Close => {
                 window.set_should_close(true)
@@ -201,6 +190,7 @@ fn main() {
             WindowEvent::MouseButton(glfw::MouseButtonLeft, glfw::Action::Press, _) => {
                 mouse_down = true
             }
+
             WindowEvent::MouseButton(glfw::MouseButtonLeft, glfw::Action::Release, _) => {
                 mouse_down = false
             }
@@ -208,30 +198,76 @@ fn main() {
             _ => {}
         });
 
-        if mouse_down && instance_data_offset < 50_000 {
-            let v_x: f32 = rand::random_range(-30.0..30.0);
-            let v_y: f32 = rand::random_range(-30.0..30.0);
+        let ptr = resources.get::<InstanceDataPtr>().unwrap().get_ptr();
+        let mut qt = quadtree::QuadTree::<usize>::new(
+            quad_capacity,
+            Rect {
+                left: 0.,
                 top: 0.,
+                width: window.get_size().0 as _,
+                height: window.get_size().1 as _,
+            },
+        );
 
-            let (x, y) = window.get_cursor_pos();
+        <&EntityIndex>::query().for_each(&world, |id| {
+            let [x, y, r, ..] = utils::get_entity(id.0, ptr);
+            qt.push((glam::vec2(*x, *y), *r, id.0));
+        });
 
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    [x as _, y as _, particle_radius].as_ptr(),
-                    instance_data_ptr.add(instance_data_offset),
-                    3,
-                );
+        resources.insert(qt);
 
-                instance_data_offset += 3;
-            };
+        if mouse_down {
+            for _ in 0..10 {
+                if instance_data_offset / 3 < buffer_capacity {
+                    let v_x: f32 = rand::random_range(-30.0..30.0);
+                    let v_y: f32 = rand::random_range(-30.0..30.0);
 
-            world.push((
-                EntityIndex(resources.get::<InstanceCount>().unwrap().0 as _),
-                Velocity(glam::vec2(v_x, v_y)),
-                Mass(particle_radius.powi(2)),
-            ));
+                    let (x, y) = window.get_cursor_pos();
+                    unsafe {
+                        let r = rand::random_range(0.0..=1.0);
+                        let g = rand::random_range(0.0..=1.0);
+                        let b = rand::random_range(0.0..=1.0);
 
-            resources.get_mut::<InstanceCount>().unwrap().0 += 1;
+                        // copy position and radius data to GPU
+                        let entity_data: [f32; FLOATS_PER_INSTANCE] =
+                            [x as _, y as _, particle_radius, r, g, b];
+
+                        std::ptr::copy_nonoverlapping(
+                            entity_data.as_ptr(),
+                            instance_data_ptr.add(instance_data_offset),
+                            entity_data.len(),
+                        )
+                    };
+
+                    instance_data_offset += FLOATS_PER_INSTANCE;
+
+                    world.push((
+                        // used as pointer offset in systems
+                        EntityIndex(resources.get::<InstanceCount>().unwrap().0 as _),
+                        Velocity(glam::vec2(v_x, v_y)),
+                        Mass(particle_radius.powi(2)),
+                    ));
+
+                    resources.get_mut::<InstanceCount>().unwrap().0 += 1;
+                } else {
+                    let old_capacity = buffer_capacity;
+                    buffer_capacity *= 2;
+
+                    unsafe {
+                        utils::reallocate_instance_vbo(
+                            &gl,
+                            buffer_capacity,
+                            old_capacity,
+                            &mut instance_data_ptr,
+                            &mut instance_vbo,
+                            vao,
+                        )
+                    };
+
+                    // update the old pointer
+                    resources.insert(InstanceDataPtr::new(instance_data_ptr));
+                }
+            }
         }
 
         resources.insert(DeltaTime(dt));
@@ -255,22 +291,4 @@ fn main() {
 
         window.swap_buffers();
     }
-}
-
-fn generate_circle(point_count: u32) -> (Vec<f32>, Vec<u32>) {
-    let mut vertices: Vec<f32> = vec![];
-
-    let angle = 2.0 * std::f32::consts::PI / point_count as f32;
-
-    vertices.extend([0.0, 0.0]);
-    vertices.extend(
-        (0..point_count)
-            .map(|i| angle * i as f32)
-            .flat_map(|theta| [theta.cos(), theta.sin()]),
-    );
-
-    let mut indices: Vec<u32> = Vec::from_iter((0..point_count).flat_map(|i| [0, i, i + 1]));
-    indices.extend([0, point_count, 1]);
-
-    (vertices, indices)
 }

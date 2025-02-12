@@ -1,17 +1,6 @@
-use std::hint::unreachable_unchecked;
+use world::SubWorld;
 
 use super::*;
-
-fn get_current_entity<'a>(index: usize, ptr: *mut f32) -> [&'a mut f32; 3] {
-    unsafe {
-        let [x, y, r] = std::slice::from_raw_parts_mut(ptr.add(index * FLOATS_PER_INSTANCE), 3)
-        else {
-            unreachable_unchecked()
-        };
-
-        [x, y, r]
-    }
-}
 
 #[system(for_each)]
 pub fn update_positions(
@@ -21,7 +10,7 @@ pub fn update_positions(
     #[resource] DeltaTime(dt): &DeltaTime,
 ) {
     let dt = *dt;
-    let [pos_x, pos_y, _] = get_current_entity(*index, ptr.get_ptr());
+    let [pos_x, pos_y, ..] = utils::get_entity(*index, ptr.get_ptr());
 
     *pos_x += vel.x * dt;
     *pos_y += vel.y * dt;
@@ -34,7 +23,7 @@ pub fn check_wall_collision(
     #[resource] size: &(i32, i32),
     #[resource] ptr: &InstanceDataPtr,
 ) {
-    let [pos_x, pos_y, radius] = get_current_entity(*index, ptr.get_ptr());
+    let [pos_x, pos_y, radius, ..] = utils::get_entity(*index, ptr.get_ptr());
 
     if *pos_x - *radius < 0.0 {
         vel.0.x *= -1.0;
