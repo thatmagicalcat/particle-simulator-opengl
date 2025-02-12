@@ -3,6 +3,7 @@ use std::time::Instant;
 use glfw::{Context, WindowHint};
 
 mod components;
+mod quadtree;
 mod shader;
 mod systems;
 
@@ -11,6 +12,7 @@ use glow::HasContext;
 use shader::Shader;
 use systems as sys;
 
+use quadtree::*;
 use legion::*;
 
 const WIDTH: u32 = 800;
@@ -166,7 +168,7 @@ fn main() {
 
     orthographic_uniform(window.get_size());
 
-    unsafe {
+    let quad_capacity = 32;
         std::ptr::copy_nonoverlapping(
             [100.0, 100.0, 20.0, 300.0, 300.0, 30.0].as_ptr(),
             instance_data_ptr,
@@ -209,6 +211,7 @@ fn main() {
         if mouse_down && instance_data_offset < 50_000 {
             let v_x: f32 = rand::random_range(-30.0..30.0);
             let v_y: f32 = rand::random_range(-30.0..30.0);
+                top: 0.,
 
             let (x, y) = window.get_cursor_pos();
 
